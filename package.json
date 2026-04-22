@@ -1,0 +1,34 @@
+{
+  "name": "mal-mcp",
+  "version": "0.1.0",
+  "description": "Model Context Protocol server for MyAnimeList",
+  "license": "MIT",
+  "type": "module",
+  "module": "src/index.ts",
+  "bin": {
+    "mal-mcp": "src/index.ts",
+    "mal-mcp-auth": "src/auth-cli.ts"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "bun src/index.ts",
+    "dev": "bun --watch src/index.ts",
+    "auth": "bun src/auth-cli.ts",
+    "worker:dev": "wrangler dev",
+    "worker:deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.18.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250101.0",
+    "@types/bun": "latest",
+    "typescript": "^5.6.0",
+    "wrangler": "^4.0.0"
+  }
+}
