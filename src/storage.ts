@@ -81,66 +81,57 @@ export class FileStore implements MalStore {
   }
 }
 
-interface DurableObjectLikeStorage {
-  get<T = unknown>(key: string): Promise<T | undefined>;
-  put<T>(key: string, value: T): Promise<void>;
-  delete(key: string): Promise<boolean>;
+/**
+ * Per-MAL-user store backed by a `MalSession` Durable Object stub.
+ * Config and tokens both live in the DO (each user supplies their own MAL API
+ * client during sign-in). Pending-auth methods are unused on the worker — the
+ * OAuth dance state is handled separately, in worker.ts, via OAUTH_KV.
+ */
+interface MalSessionStub {
+  getConfig(): Promise<MalConfig | undefined>;
+  setConfig(config: MalConfig): Promise<void>;
+  getTokens(): Promise<OAuthTokens | undefined>;
+  setTokens(tokens: OAuthTokens): Promise<void>;
+  clearTokens(): Promise<void>;
 }
 
-export class DurableObjectStore implements MalStore {
-  private static readonly CONFIG_KEY = "config";
-  private static readonly TOKENS_KEY = "tokens";
-  private static readonly PENDING_PREFIX = "pending_auth:";
-  private static readonly PENDING_TTL_MS = 10 * 60 * 1000;
-
-  constructor(private readonly storage: DurableObjectLikeStorage) {}
+export class WorkerMalStore implements MalStore {
+  constructor(private readonly stub: MalSessionStub) {}
 
   getConfig(): Promise<MalConfig | undefined> {
-    return this.storage.get<MalConfig>(DurableObjectStore.CONFIG_KEY);
+    return this.stub.getConfig();
   }
 
   async setConfig(config: MalConfig): Promise<void> {
-    await this.storage.put(DurableObjectStore.CONFIG_KEY, config);
+    await this.stub.setConfig(config);
   }
 
   async clearConfig(): Promise<void> {
-    await this.storage.delete(DurableObjectStore.CONFIG_KEY);
+    // not exposed: config is rewritten on every successful sign-in
   }
 
   getTokens(): Promise<OAuthTokens | undefined> {
-    return this.storage.get<OAuthTokens>(DurableObjectStore.TOKENS_KEY);
+    return this.stub.getTokens();
   }
 
   async setTokens(tokens: OAuthTokens): Promise<void> {
-    await this.storage.put(DurableObjectStore.TOKENS_KEY, tokens);
+    await this.stub.setTokens(tokens);
   }
 
   async clearTokens(): Promise<void> {
-    await this.storage.delete(DurableObjectStore.TOKENS_KEY);
+    await this.stub.clearTokens();
   }
 
-  async getPendingAuth(stateKey: string): Promise<PendingAuth | undefined> {
-    const pending = await this.storage.get<PendingAuth>(
-      DurableObjectStore.PENDING_PREFIX + stateKey,
-    );
-    if (!pending) return undefined;
-    if (Date.now() - pending.createdAt > DurableObjectStore.PENDING_TTL_MS) {
-      await this.deletePendingAuth(stateKey);
-      return undefined;
-    }
-    return pending;
+  async getPendingAuth(): Promise<PendingAuth | undefined> {
+    return undefined;
   }
 
-  async setPendingAuth(stateKey: string, pending: PendingAuth): Promise<void> {
-    await this.storage.put(DurableObjectStore.PENDING_PREFIX + stateKey, pending);
-  }
+  async setPendingAuth(): Promise<void> {}
 
-  async deletePendingAuth(stateKey: string): Promise<void> {
-    await this.storage.delete(DurableObjectStore.PENDING_PREFIX + stateKey);
-  }
+  async deletePendingAuth(): Promise<void> {}
 
   describe(): string {
-    return "durable object storage";
+    return "cloudflare durable object (per MAL user)";
   }
 }
 

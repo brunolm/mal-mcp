@@ -4,7 +4,8 @@ A [Model Context Protocol](https://modelcontextprotocol.io) server that exposes 
 
 ## Tools
 
-### Setup
+### Setup (stdio only)
+On hosted Worker deployments these tools are not registered — sign-in happens through the Worker's OAuth flow when your MCP client first connects.
 - `configure` — store the user's MyAnimeList `client_id` (and `client_secret` if issued). Must be called before any other tool.
 - `authenticate` — start the MAL OAuth flow.
 - `get_auth_status` — check whether credentials and user tokens are available.
@@ -73,55 +74,61 @@ $env:MAL_CLIENT_ID = "your-client-id"
 bun run auth
 ```
 
-## Option 2: Host on Cloudflare Workers (multi-user)
+## Option 2: Host on Cloudflare Workers (multi-user, OAuth)
 
-This deploys a single Worker that every user can connect to. Each user gets their own isolated state — credentials, tokens, and OAuth flow — stored in a [Durable Object](https://developers.cloudflare.com/durable-objects/) keyed by a URL-path user ID.
+A single Worker serves every user. The Worker is an MCP OAuth resource server — your MCP client discovers OAuth metadata, registers itself dynamically, and walks the user through MyAnimeList sign-in. The Worker has no MAL credentials of its own; each user supplies their own MAL API client during sign-in. Identity is bound to the MyAnimeList numeric user id; short-lived access tokens (issued by the Worker) are revocable per-grant.
 
-### 1. Install and deploy
+### 1. Operator setup (once)
 
 ```powershell
 bun install
 bunx wrangler login
+
+# KV namespace used by the OAuth provider for client/grant/token state
+bunx wrangler kv namespace create OAUTH_KV
+# Paste the printed id into wrangler.jsonc under kv_namespaces[0].id
+
 bun run worker:deploy
 ```
 
-Wrangler prints the deployed URL, e.g. `https://mal-mcp.<account>.workers.dev`.
-
-To run locally while developing:
+For local development:
 
 ```powershell
 bun run worker:dev
 ```
 
-### 2. Each user sets up their own connection
+No secrets to set — the Worker is BYO-MAL-credentials.
 
-Every user of the hosted server follows these steps:
+### 2. Each user connects
 
-1. **Generate a user ID.** Any hard-to-guess string, 8–128 chars of `A-Z a-z 0-9 _ -`. A UUID is perfect:
-   ```powershell
-   [guid]::NewGuid().ToString("N")
-   ```
-2. **Add the MCP server** to their client config using a URL that embeds the user ID:
-   ```json
-   {
-     "mcpServers": {
-       "mal": {
-         "url": "https://mal-mcp.<account>.workers.dev/u/<your-user-id>/mcp"
-       }
-     }
-   }
-   ```
-3. **Create a MAL API client** at <https://myanimelist.net/apiconfig>:
-   - **App Type:** other / web
-   - **App Redirect URL:** `https://mal-mcp.<account>.workers.dev/callback` (the Worker origin)
-4. **Call `configure`** from the MCP client with the MAL `client_id` (and `client_secret` if issued).
-5. **Call `authenticate`** from the MCP client. It returns an authorization URL the user opens in a browser. MAL redirects to the Worker's `/callback`, which persists tokens to the user's Durable Object.
+Add the server to your MCP client:
+
+```json
+{
+  "mcpServers": {
+    "mal": {
+      "url": "https://mal-mcp.<account>.workers.dev/mcp"
+    }
+  }
+}
+```
+
+First connection flow:
+
+1. Your MCP client opens a browser to `/authorize`.
+2. The Worker shows a one-time form asking for your MAL `client_id` (and `client_secret` if your MAL app has one).
+   - If you don't have a MAL API client yet: create one at <https://myanimelist.net/apiconfig> (App Type: *other*) with the App Redirect URL set to `https://mal-mcp.<account>.workers.dev/mal-callback`.
+3. The Worker redirects to MyAnimeList for sign-in.
+4. On return the Worker stores your MAL credentials and tokens in your private Durable Object (keyed by your MAL user id), then issues an OAuth access token to your MCP client.
+
+Subsequent tool calls just use the token. If the token is later revoked or the refresh token expires, you'll be sent through the form again.
 
 ### Security notes for hosted deployments
 
-- The user ID in the URL path **is the secret that scopes access to a user's stored tokens**. Treat it like a credential — don't share it. Anyone with the URL can call tools as that user.
-- Hosting the server publicly exposes it to the internet. Consider adding a custom domain with [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/) or another authentication layer if you want to restrict who can connect at all.
-- The `callback` URL is public and shared across users; it only accepts requests with a valid MAL-issued authorization code and state, and the state encodes the user ID so tokens land in the correct Durable Object.
+- Access tokens are short-lived (1 hour by default) and refreshable; refresh tokens expire after 30 days. Both are revocable per-grant.
+- MAL credentials and tokens never leave the Worker — only an opaque Worker-issued bearer token rides on each MCP request.
+- Token props are encrypted at rest by [`@cloudflare/workers-oauth-provider`](https://github.com/cloudflare/workers-oauth-provider) using the secret token as key material.
+- The Worker is publicly reachable. Anyone can attempt the sign-in flow, but they only ever get access to *their own* MAL account, using *their own* MAL API client.
 
 ## Environment variables (stdio only)
 
@@ -131,7 +138,7 @@ Every user of the hosted server follows these steps:
 | `MAL_CLIENT_SECRET` | no | Same, for clients that were issued a secret. |
 | `MAL_AUTH_PORT` | no | Port the one-shot OAuth callback listens on (default `8765`). |
 
-On hosted Worker deployments, env vars are **not** used; every user supplies their own credentials via the `configure` tool.
+On hosted Worker deployments these env vars are not used; each end user supplies their own MAL credentials through the Worker's OAuth sign-in form.
 
 ## Development
 

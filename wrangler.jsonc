@@ -18,6 +18,14 @@
       "new_sqlite_classes": ["MalSession"]
     }
   ],
+  // Run `wrangler kv namespace create OAUTH_KV` once and paste the id below.
+  // For local dev, `wrangler dev` provisions a local KV automatically.
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "ce27a12410a2465ab50659ebf8e0b7f8"
+    }
+  ],
   "observability": {
     "enabled": true
   }
