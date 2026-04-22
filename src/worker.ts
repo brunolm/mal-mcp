@@ -8,15 +8,26 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
-import { buildAuthUrl, exchangeCode, generatePkceMaterial } from "./auth.js";
+import {
+  buildAuthUrl,
+  exchangeCode,
+  generatePkceMaterial,
+  refreshAccessToken,
+} from "./auth.js";
 import { MalClient } from "./mal-client.js";
-import { type MalConfig, type OAuthTokens, WorkerMalStore } from "./storage.js";
+import {
+  InMemoryMalStore,
+  type MalConfig,
+  type OAuthTokens,
+} from "./storage.js";
 import { registerAnimeTools } from "./tools/anime.js";
 import { run } from "./tools/helpers.js";
 import { registerMangaTools } from "./tools/manga.js";
 import { registerUserTools } from "./tools/user.js";
 
 export interface Env {
+  // Retained only to keep the wrangler binding valid; no longer read on the
+  // hot path. A follow-up migration (`deleted_classes`) can drop it.
   MAL_SESSION: DurableObjectNamespace<MalSession>;
   OAUTH_KV: KVNamespace;
   OAUTH_PROVIDER: OAuthHelpers;
@@ -24,6 +35,8 @@ export interface Env {
 
 interface GrantProps extends Record<string, unknown> {
   userHash: string;
+  config: MalConfig;
+  tokens: OAuthTokens;
 }
 
 interface PendingMalAuth {
@@ -72,14 +85,14 @@ const apiHandler = {
     }
 
     const props = (ctx as ExecutionContext & { props: GrantProps }).props;
-    if (!props?.userHash) {
-      return new Response("Missing grant props", { status: 500 });
+    if (!props?.config?.clientId || !props?.tokens?.access_token) {
+      return new Response(
+        "Missing MAL credentials in grant. Reconnect this MCP server to re-authorize.",
+        { status: 401 },
+      );
     }
 
-    const stub = env.MAL_SESSION.get(
-      env.MAL_SESSION.idFromName(`u:${props.userHash}`),
-    );
-    const store = new WorkerMalStore(stub);
+    const store = new InMemoryMalStore(props.config, props.tokens);
     const client = new MalClient(store);
 
     const server = new McpServer({ name: "mal-mcp", version: "0.1.0" });
@@ -273,18 +286,16 @@ async function finishMalAuth(env: Env, url: URL): Promise<Response> {
     pending.malClientSecret,
   );
 
-  const stub = env.MAL_SESSION.get(env.MAL_SESSION.idFromName(`u:${userHash}`));
-  await stub.setConfig({
+  const config: MalConfig = {
     clientId: pending.malClientId,
     clientSecret: pending.malClientSecret,
-  });
-  await stub.setTokens(tokens);
+  };
 
   const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({
     request: authReq,
     userId: userHash,
     scope: authReq.scope,
-    props: { userHash } satisfies GrantProps,
+    props: { userHash, config, tokens } satisfies GrantProps,
     metadata: {},
   });
 
@@ -436,6 +447,15 @@ function escapeHtml(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
+// If MAL access token expires in less than this, refresh it during MCP token
+// exchange. Chosen to comfortably span one MCP access-token lifetime so each
+// 31-day MAL cycle triggers at most one refresh.
+const MAL_REFRESH_THRESHOLD_MS = 2 * 60 * 60 * 1000;
+// Cap the MCP access token TTL so the MCP refresh cycle fires before the MAL
+// token expires — that's what drives the `tokenExchangeCallback` to rotate it.
+const MCP_ACCESS_TOKEN_DEFAULT_SECONDS = 60 * 60;
+const MAL_EXPIRY_SKEW_SECONDS = 5 * 60;
+
 export default new OAuthProvider<Env>({
   apiRoute: "/mcp",
   apiHandler,
@@ -444,4 +464,37 @@ export default new OAuthProvider<Env>({
   tokenEndpoint: "/token",
   clientRegistrationEndpoint: "/register",
   scopesSupported: ["mal"],
+  tokenExchangeCallback: async ({ props }) => {
+    const current = props as GrantProps | undefined;
+    if (!current?.config?.clientId || !current?.tokens?.refresh_token) return;
+
+    const now = Date.now();
+    const malRemainingMs = current.tokens.expires_at - now;
+
+    let tokens = current.tokens;
+    if (malRemainingMs < MAL_REFRESH_THRESHOLD_MS) {
+      try {
+        tokens = await refreshAccessToken({
+          clientId: current.config.clientId,
+          clientSecret: current.config.clientSecret,
+          refreshToken: current.tokens.refresh_token,
+        });
+      } catch {
+        // Leave stale tokens; next exchange will try again.
+      }
+    }
+
+    const malRemainingSeconds = Math.max(
+      60,
+      Math.floor((tokens.expires_at - Date.now()) / 1000) -
+        MAL_EXPIRY_SKEW_SECONDS,
+    );
+    const accessTokenTTL = Math.min(
+      MCP_ACCESS_TOKEN_DEFAULT_SECONDS,
+      malRemainingSeconds,
+    );
+
+    const newProps: GrantProps = { ...current, tokens };
+    return { newProps, accessTokenTTL };
+  },
 });

@@ -64,47 +64,43 @@ export class FileStore implements MalStore {
 }
 
 /**
- * Per-MAL-user store backed by a `MalSession` Durable Object stub.
- * Config and tokens both live in the DO (each user supplies their own MAL API
- * client during the hosted OAuth sign-in).
+ * Serves a single request from config + tokens already loaded into memory
+ * (typically from the OAuth grant props). Writes update the in-memory copy
+ * so the rest of the current request sees refreshed tokens, but they do not
+ * persist — grant-level persistence happens via `tokenExchangeCallback`.
  */
-interface MalSessionStub {
-  getConfig(): Promise<MalConfig | undefined>;
-  setConfig(config: MalConfig): Promise<void>;
-  getTokens(): Promise<OAuthTokens | undefined>;
-  setTokens(tokens: OAuthTokens): Promise<void>;
-  clearTokens(): Promise<void>;
-}
+export class InMemoryMalStore implements MalStore {
+  constructor(
+    private config: MalConfig | undefined,
+    private tokens: OAuthTokens | undefined,
+  ) {}
 
-export class WorkerMalStore implements MalStore {
-  constructor(private readonly stub: MalSessionStub) {}
-
-  getConfig(): Promise<MalConfig | undefined> {
-    return this.stub.getConfig();
+  async getConfig(): Promise<MalConfig | undefined> {
+    return this.config;
   }
 
   async setConfig(config: MalConfig): Promise<void> {
-    await this.stub.setConfig(config);
+    this.config = config;
   }
 
   async clearConfig(): Promise<void> {
-    // not exposed: config is rewritten on every successful sign-in
+    this.config = undefined;
   }
 
-  getTokens(): Promise<OAuthTokens | undefined> {
-    return this.stub.getTokens();
+  async getTokens(): Promise<OAuthTokens | undefined> {
+    return this.tokens;
   }
 
   async setTokens(tokens: OAuthTokens): Promise<void> {
-    await this.stub.setTokens(tokens);
+    this.tokens = tokens;
   }
 
   async clearTokens(): Promise<void> {
-    await this.stub.clearTokens();
+    this.tokens = undefined;
   }
 
   describe(): string {
-    return "cloudflare durable object (per MAL user)";
+    return "oauth grant props (in-memory)";
   }
 }
 
