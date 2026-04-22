@@ -7,3 +7,4 @@ dist/
 *.tgz
 .wrangler/
 .dev.vars
+*.local.*

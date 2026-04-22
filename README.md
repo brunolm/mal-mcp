@@ -6,8 +6,8 @@ A [Model Context Protocol](https://modelcontextprotocol.io) server that exposes 
 
 ### Setup
 
-- `configure` — **stdio only** — store the user's MyAnimeList `client_id` (and `client_secret` if issued). Must be called before any other tool. Not registered on the Worker; on the Worker, credentials come in through `authenticate`.
-- `authenticate` — start the MAL OAuth flow. On stdio, opens a browser and waits for the local callback. On the Worker, takes `client_id` (and optional `client_secret`) and returns a MAL authorization URL to open manually.
+- `configure` — **stdio only** — store the user's MyAnimeList `client_id` (and `client_secret` if issued). Must be called before any other tool. Not registered on the Worker; on the Worker, each user signs in through the MCP OAuth flow when they add the server to their client.
+- `authenticate` — **stdio only (meaningful)** — start the MAL OAuth flow; opens a browser and waits for the local callback. On the Worker this is a no-op kept for compatibility — auth happens automatically on connect via MCP OAuth.
 - `get_auth_status` — check whether credentials and user tokens are available.
 
 ### Public (Client ID only)
@@ -77,53 +77,65 @@ $env:MAL_CLIENT_ID = "your-client-id"
 bun run auth
 ```
 
-## Option 2: Host on Cloudflare Workers (multi-user, hash-derived URLs)
+## Option 2: Host on Cloudflare Workers (multi-user, MCP OAuth)
 
-A single Worker serves every user. Each user gets a private MCP URL of the form `https://mal-mcp.<account>.workers.dev/u/<hash>/mcp`, where `<hash>` is the first 32 hex chars of `sha256("v1:" + client_id + ":" + (client_secret ?? ""))`. Per-user state (MAL credentials + OAuth tokens) lives in a Durable Object keyed by that hash. No KV namespace, no OAuth provider library, no operator-side MAL credentials.
+A single Worker serves every user behind standard MCP OAuth 2.1 (Dynamic Client Registration). One URL for everyone: `https://mal-mcp.<account>.workers.dev/mcp`. During sign-in each user supplies their own MAL `client_id` (and `client_secret` if issued); per-user state lives in a Durable Object keyed by a hash of those credentials.
 
 ### 1. Operator setup (once)
 
 ```powershell
 bun install
 bunx wrangler login
+bunx wrangler kv namespace create OAUTH_KV
+```
+
+Paste the returned namespace `id` into `wrangler.jsonc` (replace `REPLACE_WITH_KV_ID`), then deploy:
+
+```powershell
 bun run worker:deploy
 ```
 
 For local development:
 
 ```powershell
+bunx wrangler kv namespace create OAUTH_KV --preview
 bun run worker:dev
 ```
 
 ### 2. Each user connects
 
-1. Open `https://mal-mcp.<account>.workers.dev/` in a browser. Paste your MAL `client_id` (and `client_secret` if MAL issued one) — hashing happens locally in the browser. The page returns:
-   - your MCP server URL (`/u/<hash>/mcp`), and
-   - the App Redirect URL to register on your MAL API client (`/u/<hash>/callback`).
+1. Create a MAL API client at <https://myanimelist.net/apiconfig> (App Type: _other_). Set **App Redirect URL** to:
 
-   If you don't have a MAL API client yet: create one at <https://myanimelist.net/apiconfig> (App Type: _other_) and paste the callback URL into "App Redirect URL".
+   ```
+   https://mal-mcp.<account>.workers.dev/mal/callback
+   ```
 
-2. Add the MCP server to your client config:
+   (This exact URL — same for every user of a given deployment.)
+
+2. Add the MCP server to your client:
+
+   ```powershell
+   claude mcp add --transport http mal https://mal-mcp.<account>.workers.dev/mcp
+   ```
+
+   Or equivalently in config:
 
    ```json
    {
      "mcpServers": {
        "mal": {
-         "url": "https://mal-mcp.<account>.workers.dev/u/<hash>/mcp"
+         "url": "https://mal-mcp.<account>.workers.dev/mcp"
        }
      }
    }
    ```
 
-3. Call the `authenticate` MCP tool with the same `client_id` (and `client_secret`). The Worker re-hashes them, verifies the hash matches the URL, stores them in your DO, and returns a MyAnimeList authorization URL. Open it in a browser to complete sign-in — the redirect lands on the callback URL and persists tokens to your session.
-
-Subsequent tool calls just use the stored tokens; the access token is refreshed automatically.
+3. Your MCP client will pop a browser tab on first connect. The Worker's authorize page asks for your MAL `client_id` (and `client_secret` if issued), redirects you to MyAnimeList to approve, then returns you to your MCP client — now signed in. Access and refresh tokens are persisted in your Durable Object; the MAL access token is refreshed automatically.
 
 ### Security notes for hosted deployments
 
-- The MCP URL contains a hash of your MAL credentials. Treat the URL like a secret — anyone with it can call MAL on your behalf using tokens already stored in your session.
-- Knowing only the URL hash is not enough to seed a fresh session: `authenticate` re-verifies the supplied `client_id`/`client_secret` against the URL hash before storing them.
-- Different credentials → different hash → fully separate Durable Object. There is no cross-user shared state.
+- The Worker is its own OAuth 2.1 authorization server for MCP. Bearer tokens issued to your MCP client are scoped to you; leaking one lets the bearer call MAL on your behalf until the token expires.
+- MAL credentials never leave the authorize flow in plaintext after submission — they're stored encrypted in per-user Durable Object storage, keyed by a hash of those same credentials. Different credentials → different Durable Object → fully separate state.
 - The Worker holds no MAL credentials of its own; each user supplies their own MAL API client.
 
 ## Environment variables (stdio only)
@@ -134,7 +146,7 @@ Subsequent tool calls just use the stored tokens; the access token is refreshed 
 | `MAL_CLIENT_SECRET` | no       | Same, for clients that were issued a secret.                        |
 | `MAL_AUTH_PORT`     | no       | Port the one-shot OAuth callback listens on (default `8765`).       |
 
-On hosted Worker deployments these env vars are not used; each end user supplies their own MAL credentials through the Worker's OAuth sign-in form.
+On hosted Worker deployments these env vars are not used; each end user supplies their own MAL credentials through the Worker's authorize page during MCP OAuth sign-in.
 
 ## Development
 

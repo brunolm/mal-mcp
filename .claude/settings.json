@@ -3,7 +3,8 @@
     "allow": [
       "WebFetch(domain:developers.cloudflare.com)",
       "Bash(bun run *)",
-      "Bash(bunx wrangler *)"
+      "Bash(bunx wrangler *)",
+      "WebFetch(domain:www.npmjs.com)"
     ]
   }
 }
