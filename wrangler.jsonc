@@ -3,7 +3,9 @@
   "name": "mal-mcp",
   "main": "src/worker.ts",
   "compatibility_date": "2025-10-01",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "durable_objects": {
     "bindings": [
       {
@@ -15,15 +17,9 @@
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["MalSession"]
-    }
-  ],
-  // Run `wrangler kv namespace create OAUTH_KV` once and paste the id below.
-  // For local dev, `wrangler dev` provisions a local KV automatically.
-  "kv_namespaces": [
-    {
-      "binding": "OAUTH_KV",
-      "id": "ce27a12410a2465ab50659ebf8e0b7f8"
+      "new_sqlite_classes": [
+        "MalSession"
+      ]
     }
   ],
   "observability": {
