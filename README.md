@@ -135,8 +135,43 @@ bun run worker:dev
 ### Security notes for hosted deployments
 
 - The Worker is its own OAuth 2.1 authorization server for MCP. Bearer tokens issued to your MCP client are scoped to you; leaking one lets the bearer call MAL on your behalf until the token expires.
-- MAL credentials never leave the authorize flow in plaintext after submission — they're stored encrypted in per-user Durable Object storage, keyed by a hash of those same credentials. Different credentials → different Durable Object → fully separate state.
+- Different MAL credentials → different Durable Object → fully separate state. There is no cross-user shared state.
 - The Worker holds no MAL credentials of its own; each user supplies their own MAL API client.
+
+## Data storage
+
+### stdio
+
+Two plaintext JSON files in your home directory, created with mode `0600` (owner read/write only):
+
+| File                       | Contents                                                                  |
+| -------------------------- | ------------------------------------------------------------------------- |
+| `~/.mal-mcp-config.json`   | Your MAL `client_id` and (if issued) `client_secret`.                     |
+| `~/.mal-mcp-tokens.json`   | MAL `access_token`, `refresh_token`, and `expires_at` after `authenticate`.|
+
+Delete either file to reset the corresponding state. Nothing is sent anywhere besides `myanimelist.net` and `api.myanimelist.net`.
+
+### Hosted Worker
+
+Two Cloudflare storage surfaces:
+
+**`OAUTH_KV` (Workers KV namespace)** — used by `@cloudflare/workers-oauth-provider` and by the MAL authorize relay:
+
+- Registered OAuth clients (Dynamic Client Registration), authorization grants, and access/refresh tokens. The provider stores grant `props` encrypted; the encryption key is wrapped into the issued token itself, so KV snapshots alone are not enough to recover props.
+- Short-lived (10-minute TTL) pending-MAL-auth records keyed by a random state string. Each record holds the pending authorize URL, your MAL `client_id`/`client_secret`, the PKCE verifier, and the callback URL. Entries are deleted as soon as the MAL callback consumes them, or expire automatically otherwise. They are stored **as plaintext JSON in KV**.
+
+**`MAL_SESSION` (Durable Object, one per user)** — keyed by `u:<32-hex>` where the hex is the first 32 chars of `sha256("v1:" + mal_client_id + ":" + (mal_client_secret ?? ""))`. Stored as plaintext in the DO's SQLite storage (Cloudflare encrypts DO storage at rest on disk):
+
+- `config`: your MAL `client_id` and (if issued) `client_secret`.
+- `tokens`: MAL `access_token`, `refresh_token`, `expires_at`.
+
+Two different MAL credential pairs produce two different hashes → two fully separate Durable Objects with no shared state.
+
+**What is *not* stored:** anime/manga lists, user profile data, search results, or anything else returned from MAL — those flow straight through the request on demand. No analytics, no logs of request contents beyond standard Cloudflare observability metrics.
+
+**What travels over the wire:** MAL `client_id`/`client_secret` are submitted as form fields from your browser to the authorize page over HTTPS. MAL access tokens are forwarded as `Authorization: Bearer …` to `api.myanimelist.net`.
+
+**Resetting a user's state:** revoke the grant from your MCP client (or reconnect), or contact the operator to delete the matching Durable Object. Re-authorizing with the same MAL credentials will reuse the same DO and its existing tokens.
 
 ## Environment variables (stdio only)
 

@@ -8,21 +8,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
-import {
-  buildAuthUrl,
-  exchangeCode,
-  generatePkceMaterial,
-} from "./auth.js";
+import { buildAuthUrl, exchangeCode, generatePkceMaterial } from "./auth.js";
 import { MalClient } from "./mal-client.js";
-import {
-  type MalConfig,
-  type OAuthTokens,
-  WorkerMalStore,
-} from "./storage.js";
+import { type MalConfig, type OAuthTokens, WorkerMalStore } from "./storage.js";
 import { registerAnimeTools } from "./tools/anime.js";
+import { run } from "./tools/helpers.js";
 import { registerMangaTools } from "./tools/manga.js";
 import { registerUserTools } from "./tools/user.js";
-import { run } from "./tools/helpers.js";
 
 export interface Env {
   MAL_SESSION: DurableObjectNamespace<MalSession>;
@@ -173,7 +165,7 @@ async function startMalAuth(
   }
   if (!malClientId) {
     return htmlResponse(
-      "<h1>MAL Client ID is required</h1><p><a href=\"javascript:history.back()\">Back</a></p>",
+      '<h1>MAL Client ID is required</h1><p><a href="javascript:history.back()">Back</a></p>',
       400,
     );
   }
@@ -303,9 +295,7 @@ async function hashCredentials(
   clientId: string,
   clientSecret?: string,
 ): Promise<string> {
-  const data = new TextEncoder().encode(
-    `v1:${clientId}:${clientSecret ?? ""}`,
-  );
+  const data = new TextEncoder().encode(`v1:${clientId}:${clientSecret ?? ""}`);
   const buf = await crypto.subtle.digest("SHA-256", data);
   let hex = "";
   for (const b of new Uint8Array(buf)) hex += b.toString(16).padStart(2, "0");
@@ -419,9 +409,9 @@ function authorizePage(clientName: string, authReqUrl: string): string {
   <form method="POST" action="/authorize">
     <input type="hidden" name="__authreq_url" value="${escapeHtml(authReqUrl)}">
     <label>MAL Client ID
-      <input type="text" name="mal_client_id" autocomplete="off" spellcheck="false" required>
+      <input type="text" name="mal_client_id" autocomplete="off" spellcheck="false" autofocus required>
     </label>
-    <label>MAL Client Secret <small>(only if MAL issued one)</small>
+    <label>MAL Client Secret
       <input type="password" name="mal_client_secret" autocomplete="off" spellcheck="false">
     </label>
     <button type="submit">Continue to MyAnimeList</button>
