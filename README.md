@@ -5,12 +5,15 @@ A [Model Context Protocol](https://modelcontextprotocol.io) server that exposes 
 ## Tools
 
 ### Setup (stdio only)
+
 On hosted Worker deployments these tools are not registered — sign-in happens through the Worker's OAuth flow when your MCP client first connects.
+
 - `configure` — store the user's MyAnimeList `client_id` (and `client_secret` if issued). Must be called before any other tool.
 - `authenticate` — start the MAL OAuth flow.
 - `get_auth_status` — check whether credentials and user tokens are available.
 
 ### Public (Client ID only)
+
 - `search_anime` — search anime by title
 - `get_anime_details` — full details for an anime ID
 - `get_anime_ranking` — ranked lists (all, airing, upcoming, tv, ova, movie, special, bypopularity, favorite)
@@ -20,6 +23,7 @@ On hosted Worker deployments these tools are not registered — sign-in happens 
 - `get_manga_ranking` — ranked lists (all, manga, novels, oneshots, doujin, manhwa, manhua, bypopularity, favorite)
 
 ### User-scoped (OAuth2 access token required)
+
 - `get_current_user` — profile + anime statistics for the authenticated user
 - `get_anime_suggestions` — personalized anime recommendations
 - `get_user_anime_list` — read any user's public anime list (or `@me`)
@@ -57,6 +61,7 @@ For Claude Code, use `claude mcp add` or drop the equivalent block into `.claude
 ### 3. Configure your MAL credentials
 
 Create an API client at <https://myanimelist.net/apiconfig>:
+
 - **App Type:** other / web
 - **App Redirect URL:** `http://localhost:8765/callback`
 
@@ -117,7 +122,7 @@ First connection flow:
 
 1. Your MCP client opens a browser to `/authorize`.
 2. The Worker shows a one-time form asking for your MAL `client_id` (and `client_secret` if your MAL app has one).
-   - If you don't have a MAL API client yet: create one at <https://myanimelist.net/apiconfig> (App Type: *other*) with the App Redirect URL set to `https://mal-mcp.<account>.workers.dev/mal-callback`.
+   - If you don't have a MAL API client yet: create one at <https://myanimelist.net/apiconfig> (App Type: _other_) with the App Redirect URL set to `https://mal-mcp.<account>.workers.dev/mal-callback`.
 3. The Worker redirects to MyAnimeList for sign-in.
 4. On return the Worker stores your MAL credentials and tokens in your private Durable Object (keyed by your MAL user id), then issues an OAuth access token to your MCP client.
 
@@ -128,15 +133,15 @@ Subsequent tool calls just use the token. If the token is later revoked or the r
 - Access tokens are short-lived (1 hour by default) and refreshable; refresh tokens expire after 30 days. Both are revocable per-grant.
 - MAL credentials and tokens never leave the Worker — only an opaque Worker-issued bearer token rides on each MCP request.
 - Token props are encrypted at rest by [`@cloudflare/workers-oauth-provider`](https://github.com/cloudflare/workers-oauth-provider) using the secret token as key material.
-- The Worker is publicly reachable. Anyone can attempt the sign-in flow, but they only ever get access to *their own* MAL account, using *their own* MAL API client.
+- The Worker is publicly reachable. Anyone can attempt the sign-in flow, but they only ever get access to _their own_ MAL account, using _their own_ MAL API client.
 
 ## Environment variables (stdio only)
 
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `MAL_CLIENT_ID` | no | Seeds the stdio config store on first boot if nothing is saved yet. |
-| `MAL_CLIENT_SECRET` | no | Same, for clients that were issued a secret. |
-| `MAL_AUTH_PORT` | no | Port the one-shot OAuth callback listens on (default `8765`). |
+| Variable            | Required | Purpose                                                             |
+| ------------------- | -------- | ------------------------------------------------------------------- |
+| `MAL_CLIENT_ID`     | no       | Seeds the stdio config store on first boot if nothing is saved yet. |
+| `MAL_CLIENT_SECRET` | no       | Same, for clients that were issued a secret.                        |
+| `MAL_AUTH_PORT`     | no       | Port the one-shot OAuth callback listens on (default `8765`).       |
 
 On hosted Worker deployments these env vars are not used; each end user supplies their own MAL credentials through the Worker's OAuth sign-in form.
 
